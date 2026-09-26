@@ -1,77 +1,131 @@
-name: build-ios-moltenvk
-
-# Focused single-job build: iOS XCFramework only (with our A11 cube fix).
-# Triggers on push so every MoltenVK fork commit yields a downloadable iOS package.
+name: Build MoltenVK iOS dylib (Vulkan 1.4)
 
 on:
-  push:
-    branches: [main]
-  pull_request:
   workflow_dispatch:
 
-permissions:
-  contents: read
-
 jobs:
-  ios:
-    name: MoltenVK XCFramework (iOS device arm64)
+  build-ios-device:
+    name: iOS 真机 dylib (arm64)
     runs-on: macos-15
-    timeout-minutes: 240
-
+    timeout-minutes: 120
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          fetch-depth: 1
 
-      - name: Cache Dependencies
-        id: cache-dependencies
-        uses: actions/cache@v3
-        with:
-          path: |
-            External/build
-            !External/build/Intermediates
-          key: ${{ runner.os }}-ios-${{ hashFiles('fetchDependencies','ExternalRevisions/**','ExternalDependencies.xcodeproj/**','Scripts/**') }}
-
-      - name: Fetch Dependencies (Use Built Cache)
-        if: steps.cache-dependencies.outputs.cache-hit == 'true'
+      - name: Show toolchain
         run: |
-          ./fetchDependencies -v --none
+          sw_vers
+          xcodebuild -version
 
-      - name: Fetch Dependencies
-        if: steps.cache-dependencies.outputs.cache-hit != 'true'
+      - name: Fetch dependencies
+        run: ./fetchDependencies --ios
+
+      - name: Build iOS device dylib
         run: |
-          ./fetchDependencies -v --ios
+          xcodebuild build -quiet -project MoltenVKPackaging.xcodeproj \
+            -scheme "MoltenVK Package (iOS only)" \
+            -destination "generic/platform=iOS" 2>&1 | tee ios-build.log
 
-      - name: Output Dependency Build Logs on Failure
-        if: failure()
-        run: cat "dependenciesbuild.log"
-
-      - name: Build MoltenVK (iOS)
-        run: |
-          make ios
-
-      - name: Output MoltenVK Build Logs on Failure
+      - name: Output build log on failure
         if: failure()
         run: |
-          if [ -f "xcodebuild.log" ]; then
-            cat "xcodebuild.log"
-          fi
+          [ -f ios-build.log ] && tail -200 ios-build.log || true
 
-      - name: Tar Artifacts
+      - name: Collect libMoltenVK.dylib
+        run: |
+          set -e
+          echo "== Package 结构 =="
+          find Package -maxdepth 4 -type d | head -30
+          XF="Package/Release/MoltenVK/dynamic/MoltenVK.xcframework"
+          echo "== xcframework 结构 =="
+          find "$XF" -maxdepth 3 | head -40
+          mkdir -p dist
+
+          for dir in "$XF"/*/; do
+            plat=$(basename "$dir")
+            bin="$dir/MoltenVK.framework/MoltenVK"
+            if [ -f "$bin" ]; then
+              echo "== $plat: $(file "$bin" | sed 's/.*: //')"
+              mkdir -p "dist/$plat"
+              cp "$bin" "dist/$plat/libMoltenVK.dylib"
+              install_name_tool -id "@rpath/libMoltenVK.dylib" "dist/$plat/libMoltenVK.dylib"
+              # iOS 15+ dyld 强制校验内嵌 dylib 签名，未签名会导致 dlopen 失败、Vulkan 不可用
+              codesign -f -s - --timestamp=none "dist/$plat/libMoltenVK.dylib"
+              codesign -dv "dist/$plat/libMoltenVK.dylib" 2>&1 | head -2 || true
+              echo "archs: $(lipo -archs "$bin")"
+            fi
+          done
+
+          find Package -name "*icd*.json" -exec cp {} dist/ \; 2>/dev/null || true
+          cp -R "$XF" dist/ 2>/dev/null || true
+
+          echo "== dist 内容 =="
+          find dist -type f | sort
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: moltenvk-ios-dylib
+          path: dist/
+          if-no-files-found: error
+
+  build-ios-simulator:
+    name: iOS 模拟器 dylib
+    runs-on: macos-15
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Fetch dependencies
+        run: ./fetchDependencies --iossim
+
+      - name: Build iOS simulator dylib
+        run: |
+          xcodebuild build -quiet -project MoltenVKPackaging.xcodeproj \
+            -scheme "MoltenVK Package (iOS only)" \
+            -destination "generic/platform=iOS Simulator" \
+            -derivedDataPath Build/iossim 2>&1 | tee iossim-build.log
+
+      - name: Output build log on failure
+        if: failure()
+        run: |
+          grep -iE 'error|warning|failed|ld:' iossim-build.log | head -60
+
+      - name: Collect libMoltenVK.dylib
         if: success()
         run: |
-          rm -rf Package/Release/MoltenVKShaderConverter
-          tar -C Package -s/Release/MoltenVK/ -cvf "MoltenVK-ios.tar" Release/
+          set -e
+          XF="Package/Release/MoltenVK/dynamic/MoltenVK.xcframework"
+          echo "== xcframework 结构 =="
+          find "$XF" -maxdepth 3 | head -30
+          mkdir -p dist
+          for dir in "$XF"/*/; do
+            plat=$(basename "$dir")
+            case "$plat" in
+              *simulator*|*Simulator*)
+                bin="$dir/MoltenVK.framework/MoltenVK"
+                if [ -f "$bin" ]; then
+                  mkdir -p "dist/$plat"
+                  cp "$bin" "dist/$plat/libMoltenVK.dylib"
+                  install_name_tool -id "@rpath/libMoltenVK.dylib" "dist/$plat/libMoltenVK.dylib"
+                  codesign -f -s - --timestamp=none "dist/$plat/libMoltenVK.dylib"
+                  codesign -dv "dist/$plat/libMoltenVK.dylib" 2>&1 | head -2 || true
+                  echo "== $plat: $(file "$bin" | sed 's/.*: //')  archs: $(lipo -archs "$bin")"
+                fi
+                ;;
+            esac
+          done
+          find dist -type f | sort
 
-      - name: Upload Artifacts
+      - name: Upload artifacts
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: MoltenVK-ios
-          path: MoltenVK-ios.tar
+          name: moltenvk-ios-simulator-dylib
+          path: dist/
           if-no-files-found: error
-          retention-days: 30
