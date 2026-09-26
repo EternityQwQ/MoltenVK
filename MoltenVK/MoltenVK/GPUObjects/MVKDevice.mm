@@ -1614,7 +1614,12 @@ VkResult MVKPhysicalDevice::getImageFormatProperties(VkFormat format,
 	VkPhysicalDeviceLimits* pLimits = &_properties.limits;
 	VkExtent3D maxExt = { 1, 1, 1};
 	uint32_t maxLevels = 1;
-	uint32_t maxLayers = hasAttachmentUsage ? pLimits->maxFramebufferLayers : pLimits->maxImageArrayLayers;
+	// Cube-compatible images are rendered one face at a time and never need
+	// Metal layered rendering: allow the full array limit so cubes can be
+	// created on GPUs without layeredRendering (e.g. A11). Other attachment
+	// images keep the framebufferLayers cap, which guards multiview paths.
+	bool allowCubeLayers = mvkIsAnyFlagEnabled(flags, VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT);
+	uint32_t maxLayers = (hasAttachmentUsage && !allowCubeLayers) ? pLimits->maxFramebufferLayers : pLimits->maxImageArrayLayers;
 
 	bool supportsMSAA =  mvkAreAllFlagsEnabled(_pixelFormats.getCapabilities(format), kMVKMTLFmtCapsMSAA);
 	VkSampleCountFlags sampleCounts = supportsMSAA ? _metalFeatures.supportedSampleCounts : VK_SAMPLE_COUNT_1_BIT;
