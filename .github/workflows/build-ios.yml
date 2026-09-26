@@ -1,0 +1,77 @@
+name: build-ios-moltenvk
+
+# Focused single-job build: iOS XCFramework only (with our A11 cube fix).
+# Triggers on push so every MoltenVK fork commit yields a downloadable iOS package.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ios:
+    name: MoltenVK XCFramework (iOS device arm64)
+    runs-on: macos-15
+    timeout-minutes: 240
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache Dependencies
+        id: cache-dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            External/build
+            !External/build/Intermediates
+          key: ${{ runner.os }}-ios-${{ hashFiles('fetchDependencies','ExternalRevisions/**','ExternalDependencies.xcodeproj/**','Scripts/**') }}
+
+      - name: Fetch Dependencies (Use Built Cache)
+        if: steps.cache-dependencies.outputs.cache-hit == 'true'
+        run: |
+          ./fetchDependencies -v --none
+
+      - name: Fetch Dependencies
+        if: steps.cache-dependencies.outputs.cache-hit != 'true'
+        run: |
+          ./fetchDependencies -v --ios
+
+      - name: Output Dependency Build Logs on Failure
+        if: failure()
+        run: cat "dependenciesbuild.log"
+
+      - name: Build MoltenVK (iOS)
+        run: |
+          make ios
+
+      - name: Output MoltenVK Build Logs on Failure
+        if: failure()
+        run: |
+          if [ -f "xcodebuild.log" ]; then
+            cat "xcodebuild.log"
+          fi
+
+      - name: Tar Artifacts
+        if: success()
+        run: |
+          rm -rf Package/Release/MoltenVKShaderConverter
+          tar -C Package -s/Release/MoltenVK/ -cvf "MoltenVK-ios.tar" Release/
+
+      - name: Upload Artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MoltenVK-ios
+          path: MoltenVK-ios.tar
+          if-no-files-found: error
+          retention-days: 30
