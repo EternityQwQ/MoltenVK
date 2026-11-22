@@ -134,6 +134,11 @@ jobs:
           fi
           install_name_tool -id "@rpath/libMoltenVK.dylib" "${OUT}/libMoltenVK.dylib"
 
+          # Also ship the original ios-arm64 framework bundle.
+          cp -R "${FW_DIR}" "${OUT}/MoltenVK.framework"
+          lipo -info "${OUT}/MoltenVK.framework/MoltenVK"
+          vtool -show-build "${OUT}/MoltenVK.framework/MoltenVK"
+
           lipo -info "${OUT}/libMoltenVK.dylib"
           otool -L "${OUT}/libMoltenVK.dylib"
           vtool -show-build "${OUT}/libMoltenVK.dylib"
@@ -142,7 +147,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: MoltenVK-ios-arm64-dylib
-          path: artifacts/libMoltenVK.dylib
+          path: |
+            artifacts/libMoltenVK.dylib
+            artifacts/MoltenVK.framework
           if-no-files-found: error
 
       - name: Show build log on failure
