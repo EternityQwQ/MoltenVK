@@ -1,0 +1,142 @@
+name: Build MoltenVK iOS arm64 dylib
+
+# Manually triggered, or automatically when this workflow file is pushed.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/build-ios-dylib.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build-ios-dylib:
+    name: MoltenVK (iOS arm64 dylib)
+    runs-on: macos-15
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Show Xcode version
+        id: prep
+        run: |
+          xcodebuild -version
+          echo "XCODE_VERSION=$(xcodebuild -version | tr '\t\r\n ' '_')" >> "$GITHUB_OUTPUT"
+
+      # Python 3.12 removed distutils, which is used by
+      # glslang::update_glslang_sources.py called from fetchDependencies.
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache external dependencies
+        id: cache-dependencies
+        uses: actions/cache@v4
+        with:
+          path: External
+          key: moltenvk-ios-${{ runner.os }}-${{ steps.prep.outputs.XCODE_VERSION }}-${{ hashFiles('ExternalRevisions/**', 'fetchDependencies') }}
+
+      - name: Fetch dependencies (cache hit)
+        if: steps.cache-dependencies.outputs.cache-hit == 'true'
+        run: ./fetchDependencies -v --none
+
+      - name: Fetch iOS dependencies
+        if: steps.cache-dependencies.outputs.cache-hit != 'true'
+        run: ./fetchDependencies -v --ios
+
+      - name: Build MoltenVK package (iOS only)
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project MoltenVKPackaging.xcodeproj \
+            -scheme "MoltenVK Package (iOS only)" \
+            -destination "generic/platform=iOS" \
+            -configuration Release \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            2>&1 | tee xcodebuild.log
+
+      - name: Package libMoltenVK.dylib (arm64)
+        run: |
+          set -euo pipefail
+
+          FW_BIN="$(find Package/Release/MoltenVK/dynamic -type d -name 'MoltenVK.framework' -path '*ios-arm64*' -print -quit)"
+          if [ -z "${FW_BIN}" ]; then
+            echo "ERROR: MoltenVK.framework (ios-arm64) not found. Built packages:"
+            find Package -maxdepth 5 -print || true
+            exit 1
+          fi
+
+          FW_DIR="${FW_BIN}"
+          OUT="$PWD/artifacts"
+          rm -rf "${OUT}"
+          mkdir -p "${OUT}/include/MoltenVK"
+
+          # Copy the framework's Mach-O binary out as a standalone dylib.
+          cp "${FW_DIR}/MoltenVK" "${OUT}/libMoltenVK.dylib"
+          if lipo -info "${OUT}/libMoltenVK.dylib" | grep -q "Architectures in the fat file"; then
+            lipo -thin arm64 "${OUT}/libMoltenVK.dylib" -output "${OUT}/libMoltenVK.dylib.arm64"
+            mv "${OUT}/libMoltenVK.dylib.arm64" "${OUT}/libMoltenVK.dylib"
+          fi
+          install_name_tool -id "@rpath/libMoltenVK.dylib" "${OUT}/libMoltenVK.dylib"
+
+          # Keep a copy of the framework itself as well (useful for embedding).
+          cp -R "${FW_DIR}" "${OUT}/MoltenVK.framework"
+
+          # Public headers and the Vulkan ICD manifest.
+          cp -R MoltenVK/include/MoltenVK/ "${OUT}/include/MoltenVK/"
+          cp MoltenVK/icd/MoltenVK_icd.json "${OUT}/" || true
+
+          # dSYM, if the build produced one.
+          DSYM="$(find Package/Release/MoltenVK/dynamic -type d -name 'MoltenVK.framework.dSYM' -print -quit || true)"
+          if [ -n "${DSYM}" ]; then
+            cp -R "${DSYM}" "${OUT}/" || true
+          fi
+
+          {
+            echo "MoltenVK iOS arm64 dylib"
+            echo "Commit: ${GITHUB_SHA}"
+            echo
+            lipo -info "${OUT}/libMoltenVK.dylib"
+            echo
+            otool -L "${OUT}/libMoltenVK.dylib"
+            echo
+            vtool -show-build "${OUT}/libMoltenVK.dylib"
+          } | tee "${OUT}/BUILD_INFO.txt"
+
+          cat > "${OUT}/README.txt" <<'EOF'
+          libMoltenVK.dylib is a thin arm64 (device) iOS build of MoltenVK.
+
+          Install name: @rpath/libMoltenVK.dylib
+
+          The binary is unsigned. Sign it together with your app bundle/entitlements
+          (Xcode, ldid, TrollStore, etc.) before deploying to a device.
+
+          The MoltenVK.framework/ folder contains the original unsigned framework
+          product, in case you prefer embedding a framework instead of a naked dylib.
+          EOF
+
+          (cd "${OUT}" && shasum -a 256 libMoltenVK.dylib > libMoltenVK.dylib.sha256)
+          tar -czf "MoltenVK-ios-arm64-dylib-${GITHUB_SHA::8}.tar.gz" -C "${OUT}" .
+
+      - name: Upload dylib artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MoltenVK-ios-arm64-dylib
+          path: |
+            MoltenVK-ios-arm64-dylib-*.tar.gz
+            artifacts/
+          if-no-files-found: error
+
+      - name: Show build log on failure
+        if: failure()
+        run: cat xcodebuild.log || true
