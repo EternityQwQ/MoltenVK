@@ -37,6 +37,49 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Restore ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ccache-${{ runner.os }}-${{ steps.prep.outputs.XCODE_VERSION }}-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ runner.os }}-${{ steps.prep.outputs.XCODE_VERSION }}-
+
+      # Install ccache and point Xcode's compiler settings at its masquerade
+      # symlinks, so every C/C++/ObjC/ObjC++ compile (including the external
+      # dependency builds) is cached.
+      - name: Install and configure ccache
+        run: |
+          brew install ccache
+          export CCACHE_DIR="$HOME/.ccache"
+          mkdir -p "$CCACHE_DIR" "$RUNNER_TEMP/ccache-bin"
+
+          CCACHE_BIN="$(command -v ccache)"
+          for tool in clang clang++ cc c++; do
+            ln -sf "$CCACHE_BIN" "$RUNNER_TEMP/ccache-bin/$tool"
+          done
+
+          cat > "$RUNNER_TEMP/ccache.xcconfig" <<EOF
+          CC = $RUNNER_TEMP/ccache-bin/clang
+          CXX = $RUNNER_TEMP/ccache-bin/clang++
+          OBJC = $RUNNER_TEMP/ccache-bin/clang
+          OBJCXX = $RUNNER_TEMP/ccache-bin/clang++
+          EOF
+
+          # Make sure ccache's masquerade wrappers can find the real compiler.
+          echo "$(xcode-select -p)/Toolchains/XcodeDefault.xctoolchain/usr/bin" >> "$GITHUB_PATH"
+
+          ccache --max-size=2G
+          ccache --set-config=compression=true
+          ccache --zero-stats
+          ccache --show-config | grep -E "max_size|compression" || true
+
+          {
+            echo "CCACHE_DIR=$CCACHE_DIR"
+            echo "CCACHE_SLOPPINESS=clang_index_store,include_file_ctime,include_file_mtime,locale,pch_defines,time_macros"
+            echo "XCODE_XCCONFIG_FILE=$RUNNER_TEMP/ccache.xcconfig"
+          } >> "$GITHUB_ENV"
+
       - name: Cache external dependencies
         id: cache-dependencies
         uses: actions/cache@v4
@@ -64,6 +107,10 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             2>&1 | tee xcodebuild.log
+
+      - name: Show ccache stats
+        if: always()
+        run: ccache --show-stats || true
 
       - name: Package libMoltenVK.dylib (arm64)
         run: |
