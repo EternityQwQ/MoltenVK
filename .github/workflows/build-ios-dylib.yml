@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       sign:
-        description: "Sign outputs with ANGLE-style ad-hoc codesign"
+        description: "Sign outputs with ad-hoc codesign"
         required: false
         type: boolean
         default: true
