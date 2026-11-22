@@ -5,18 +5,10 @@ on:
   workflow_dispatch:
     inputs:
       sign:
-        description: "Sign outputs (ldid/codesign). Disable for an unsigned build."
+        description: "Sign outputs with ANGLE-style ad-hoc codesign"
         required: false
         type: boolean
         default: true
-      sign_method:
-        description: "Signing method (only used when sign is enabled)"
-        required: false
-        type: choice
-        options:
-          - ldid
-          - adhoc
-        default: ldid
   push:
     branches:
       - main
@@ -159,37 +151,13 @@ jobs:
 
       - name: Sign outputs
         if: ${{ inputs.sign }}
-        env:
-          SIGN_METHOD: ${{ inputs.sign_method }}
-          HOMEBREW_NO_AUTO_UPDATE: 1
-          HOMEBREW_NO_INSTALL_CLEANUP: 1
         run: |
           set -euo pipefail
-
-          if [ "${SIGN_METHOD}" = "adhoc" ]; then
-            # ANGLE-style ad-hoc signing.
-            codesign --force --sign - artifacts/libMoltenVK.dylib
-            codesign --force --sign - artifacts/MoltenVK.framework
-          else
-            # Amethyst-style ldid signing with entitlements.
-            # Runner images may have a stale openssl@1.1 link that breaks
-            # "brew install ldid"; same workaround Amethyst-iOS CI uses.
-            sudo rm -f /opt/homebrew/bin/openssl || true
-            brew unlink openssl@1.1 || true
-            brew uninstall --ignore-dependencies openssl@1.1 || true
-            brew link --overwrite openssl@3 || true
-            brew install ldid
-            ENT="$PWD/.github/signing/entitlements.xml"
-            ldid -S"${ENT}" artifacts/libMoltenVK.dylib
-            codesign --force --sign - --entitlements "${ENT}" artifacts/MoltenVK.framework
-            echo "=== dylib entitlements ==="
-            ldid -e artifacts/libMoltenVK.dylib
-          fi
-
           for f in artifacts/libMoltenVK.dylib artifacts/MoltenVK.framework; do
-            echo "=== ${f} ==="
-            codesign -dv --verbose=4 "${f}" 2>&1 || true
-            codesign --verify --strict --verbose=2 "${f}" 2>&1 || true
+            echo ">>> Re-signing $f"
+            codesign --force --sign - "$f"
+            codesign -dv "$f" 2>&1 | grep -i adhoc || true
+            codesign --verify --strict --verbose=2 "$f" 2>&1 || true
           done
 
       - name: Upload dylib artifact
