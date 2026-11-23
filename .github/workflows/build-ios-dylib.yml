@@ -272,7 +272,7 @@ jobs:
       - name: Upload dylib artifact
         uses: actions/upload-artifact@v4
         with:
-          name: MoltenVK-ios-arm64-dylib${{ inputs.sign && '-signed' || '' }}
+          name: MoltenVK-ios-arm64${{ inputs.sign && '-signed' || '' }}
           path: |
             artifacts/libMoltenVK.dylib
             artifacts/MoltenVK.framework
