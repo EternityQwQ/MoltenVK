@@ -27,10 +27,6 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 120
 
-    env:
-      LC_ALL: C
-      LANG: C
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -149,21 +145,34 @@ jobs:
           rm -rf "${OUT}"
           mkdir -p "${OUT}"
 
-          cp "${FW_DIR}/MoltenVK" "${OUT}/libMoltenVK.dylib"
-          if lipo -info "${OUT}/libMoltenVK.dylib" | grep -q "Architectures in the fat file"; then
-            lipo -thin arm64 "${OUT}/libMoltenVK.dylib" -output "${OUT}/libMoltenVK.dylib.arm64"
-            mv "${OUT}/libMoltenVK.dylib.arm64" "${OUT}/libMoltenVK.dylib"
+          DYLIB="${OUT}/libMoltenVK.dylib"
+          cp "${FW_DIR}/MoltenVK" "${DYLIB}"
+
+          ARCHS="$(lipo -archs "${DYLIB}")"
+          echo "architecture(s): ${ARCHS}"
+          case " ${ARCHS} " in
+            *" arm64 "*) ;;
+            *) echo "ERROR: arm64 slice not found in ${DYLIB}"; exit 1 ;;
+          esac
+          if [ "${ARCHS}" != "arm64" ]; then
+            lipo -thin arm64 "${DYLIB}" -output "${DYLIB}.arm64"
+            mv "${DYLIB}.arm64" "${DYLIB}"
           fi
-          install_name_tool -id "@rpath/libMoltenVK.dylib" "${OUT}/libMoltenVK.dylib"
+          [ "$(lipo -archs "${DYLIB}")" = "arm64" ] || {
+            echo "ERROR: expected a thin arm64 dylib"
+            exit 1
+          }
+
+          install_name_tool -id "@rpath/libMoltenVK.dylib" "${DYLIB}"
 
           # Also ship the original ios-arm64 framework bundle.
           cp -R "${FW_DIR}" "${OUT}/MoltenVK.framework"
           lipo -info "${OUT}/MoltenVK.framework/MoltenVK"
           vtool -show-build "${OUT}/MoltenVK.framework/MoltenVK"
 
-          lipo -info "${OUT}/libMoltenVK.dylib"
-          otool -L "${OUT}/libMoltenVK.dylib"
-          vtool -show-build "${OUT}/libMoltenVK.dylib"
+          lipo -info "${DYLIB}"
+          otool -L "${DYLIB}"
+          vtool -show-build "${DYLIB}"
 
       - name: Sign outputs (ad-hoc)
         if: ${{ inputs.sign }}
