@@ -67,7 +67,7 @@ set_property(CACHE MVK_CONFIG_LOG_LEVEL PROPERTY STRINGS "debug" "info" "warn" "
 
 option(MVK_EXCLUDE_SPIRV_TOOLS "Exclude the SPIRV-Tools dependency. If excluded, disables printing debug SPIR-V disassembly." OFF)
 option(MVK_EXCLUDE_CEREAL "Exclude the cereal dependency. If excluded, disables reading and writing pipeline caches." OFF)
-option(MVK_USE_METAL_PRIVATE_API "If enabled, MoltenVK will use private interfaces exposed by Metal to implement Vulkan features that are difficult to support otherwise." OFF)
+option(MVK_USE_METAL_PRIVATE_API "If enabled, MoltenVK will use private interfaces exposed by Metal to implement Vulkan features that are difficult to support otherwise." ON)
 
 option(MVK_BUILD_SHADER_CONVERTER_TOOL "If enabled, the MoltenVKShaderConverter executable will be built." OFF)
 

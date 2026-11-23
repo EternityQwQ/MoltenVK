@@ -107,10 +107,11 @@ extern "C" {
  * extend its functionality by using certain private Metal API calls, but it 
  * will also disqualify the app from being distributed via Apple App Stores.
  *
- * Disabled by default.
+ * Enabled by default in this fork, which is not distributed via the App Store.
+ * Set to 0 to build without private Metal API support.
  */
 #ifndef MVK_USE_METAL_PRIVATE_API
-#	define MVK_USE_METAL_PRIVATE_API		0
+#	define MVK_USE_METAL_PRIVATE_API		1
 #endif
 
 /** Directive to identify public symbols. */

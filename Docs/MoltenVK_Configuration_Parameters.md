@@ -601,6 +601,9 @@ Unlike `MVK_USE_METAL_PRIVATE_API`, this setting may be overridden at run time.
 
 This option is not available unless **MoltenVK** was built with `MVK_USE_METAL_PRIVATE_API` set to `1`.
 
+In this fork `MVK_USE_METAL_PRIVATE_API` defaults to `1`, so private _Metal_ interfaces are
+enabled by default. This fork is not intended for distribution through the Apple App Store.
+
 
 ---------------------------------------
 #### MVK_CONFIG_USE_MTLHEAP
