@@ -44,7 +44,14 @@ jobs:
         id: prep
         run: |
           xcodebuild -version
-          echo "XCODE_VERSION=$(xcodebuild -version | tr '\t\r\n ' '_')" >> "$GITHUB_OUTPUT"
+
+          XCODE_VERSION="$(xcodebuild -version | tr '\t\r\n ' '_')"
+          CACHE_DAY="$(date -u +%Y-%m-%d)"
+          DEPS_HASH="$(git ls-files -s -- ExternalRevisions fetchDependencies ExternalDependencies.xcodeproj Scripts | shasum -a 256 | cut -d' ' -f1)"
+
+          echo "XCODE_VERSION=${XCODE_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "EXTERNAL_CACHE_KEY=moltenvk-ios-${RUNNER_OS}-${XCODE_VERSION}-${DEPS_HASH}" >> "$GITHUB_OUTPUT"
+          echo "CCACHE_CACHE_KEY=ccache-${RUNNER_OS}-${XCODE_VERSION}-${CACHE_DAY}" >> "$GITHUB_OUTPUT"
 
       # Python 3.12 removed distutils, which is used by
       # glslang::update_glslang_sources.py called from fetchDependencies.
@@ -53,12 +60,16 @@ jobs:
         with:
           python-version: "3.11"
 
+      # ccache is mutable: rotate it once per UTC day, not once per commit.
+      # The restore-key prefix picks up the latest day and the 7-day TTL
+      # bounds the number of archives. External deps are immutable and
+      # content-addressed separately below.
       - name: Restore ccache
         id: cache-ccache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: ~/.ccache
-          key: ccache-${{ runner.os }}-${{ steps.prep.outputs.XCODE_VERSION }}-${{ github.sha }}
+          key: ${{ steps.prep.outputs.CCACHE_CACHE_KEY }}
           restore-keys: |
             ccache-${{ runner.os }}-${{ steps.prep.outputs.XCODE_VERSION }}-
 
@@ -101,12 +112,12 @@ jobs:
 
       - name: Cache external dependencies
         id: cache-dependencies
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: |
             External
             !External/build/Intermediates
-          key: moltenvk-ios-${{ runner.os }}-${{ steps.prep.outputs.XCODE_VERSION }}-${{ hashFiles('ExternalRevisions/**', 'fetchDependencies', 'ExternalDependencies.xcodeproj/**', 'Scripts/**') }}
+          key: ${{ steps.prep.outputs.EXTERNAL_CACHE_KEY }}
 
       - name: Fetch dependencies (cache hit)
         if: steps.cache-dependencies.outputs.cache-hit == 'true'
@@ -115,6 +126,18 @@ jobs:
       - name: Fetch iOS dependencies
         if: steps.cache-dependencies.outputs.cache-hit != 'true'
         run: ./fetchDependencies --ios
+
+      # Save the deps cache before the build: a later build/sign failure must
+      # not throw away 10-20 minutes of dependency compilation.
+      - name: Save external dependency cache
+        if: steps.cache-dependencies.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          key: ${{ steps.prep.outputs.EXTERNAL_CACHE_KEY }}
+          path: |
+            External
+            !External/build/Intermediates
 
       - name: Build MoltenVK package (iOS only)
         run: |
@@ -128,6 +151,16 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             2>&1 | tee xcodebuild.log
+
+      # Save ccache right after a successful build, before signing/upload.
+      # A later failure must not discard the compiled objects.
+      - name: Save ccache
+        if: steps.cache-ccache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          key: ${{ steps.prep.outputs.CCACHE_CACHE_KEY }}
+          path: ~/.ccache
 
       - name: Cache summary
         if: always()
@@ -173,7 +206,7 @@ jobs:
             echo "| Item | Result |"
             echo "|---|---|"
             echo "| External dependencies cache | ${EXTERNAL_CACHE} |"
-            echo "| ccache archive | ${CCACHE_CACHE} |"
+            echo "| ccache archive (daily) | ${CCACHE_CACHE} |"
             echo "| ccache compile hit rate | ${HIT_RATE} |"
             if [ -n "${HIT_LINE}" ]; then
               echo
@@ -272,7 +305,7 @@ jobs:
       - name: Upload dylib artifact
         uses: actions/upload-artifact@v4
         with:
-          name: MoltenVK-ios-arm64${{ inputs.sign && '-signed' || '' }}
+          name: MoltenVK-ios-arm64-dylib${{ inputs.sign && '-signed' || '' }}
           path: |
             artifacts/libMoltenVK.dylib
             artifacts/MoltenVK.framework
