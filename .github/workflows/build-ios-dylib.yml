@@ -54,6 +54,7 @@ jobs:
           python-version: "3.11"
 
       - name: Restore ccache
+        id: cache-ccache
         uses: actions/cache@v4
         with:
           path: ~/.ccache
@@ -128,9 +129,50 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             2>&1 | tee xcodebuild.log
 
-      - name: Show ccache stats
+      - name: Cache summary
         if: always()
-        run: ccache --show-stats || true
+        run: |
+          set -u
+
+          EXTERNAL_CACHE="miss"
+          if [ "${{ steps.cache-dependencies.outputs.cache-hit }}" = "true" ]; then
+            EXTERNAL_CACHE="hit"
+          fi
+
+          CCACHE_CACHE="miss"
+          if [ "${{ steps.cache-ccache.outputs.cache-hit }}" = "true" ]; then
+            CCACHE_CACHE="hit"
+          fi
+
+          HIT_RATE="n/a"
+          HIT_LINE=""
+          if command -v ccache >/dev/null 2>&1; then
+            STATS="$(ccache --show-stats 2>/dev/null || true)"
+            printf '%s\n' "${STATS}"
+            HIT_LINE="$(printf '%s\n' "${STATS}" | awk '/^[[:space:]]*Hits:/ {print; exit}')"
+            HIT_RATE="$(printf '%s\n' "${STATS}" | awk '/^[[:space:]]*Hits:/ {gsub(/[()%]/,"",$NF); print $NF; exit}')"
+            if [ -z "${HIT_RATE}" ]; then
+              HIT_RATE="n/a"
+            fi
+          fi
+
+          echo "::notice title=Cache stats::External=${EXTERNAL_CACHE}; ccache archive=${CCACHE_CACHE}; ccache compile=${HIT_RATE}"
+
+          {
+            echo "## Cache summary"
+            echo
+            echo "| Item | Result |"
+            echo "|---|---|"
+            echo "| External dependencies cache | ${EXTERNAL_CACHE} |"
+            echo "| ccache archive | ${CCACHE_CACHE} |"
+            echo "| ccache compile hit rate | ${HIT_RATE} |"
+            if [ -n "${HIT_LINE}" ]; then
+              echo
+              echo '```'
+              echo "${HIT_LINE}"
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Package libMoltenVK.dylib (arm64)
         run: |
