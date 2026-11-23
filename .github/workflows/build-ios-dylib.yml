@@ -134,14 +134,23 @@ jobs:
         run: |
           set -u
 
-          EXTERNAL_CACHE="miss"
-          if [ "${{ steps.cache-dependencies.outputs.cache-hit }}" = "true" ]; then
-            EXTERNAL_CACHE="hit"
+          EXTERNAL_CACHE="n/a"
+          if [ "${{ steps.cache-dependencies.outcome }}" = "success" ]; then
+            EXTERNAL_CACHE="miss"
+            if [ "${{ steps.cache-dependencies.outputs.cache-hit }}" = "true" ]; then
+              EXTERNAL_CACHE="hit"
+            fi
           fi
 
-          CCACHE_CACHE="miss"
-          if [ "${{ steps.cache-ccache.outputs.cache-hit }}" = "true" ]; then
-            CCACHE_CACHE="hit"
+          CCACHE_CACHE="n/a"
+          if [ "${{ steps.cache-ccache.outcome }}" = "success" ]; then
+            CCACHE_CACHE="miss"
+            if [ -n "${{ steps.cache-ccache.outputs.cache-matched-key }}" ]; then
+              CCACHE_CACHE="partial"
+              if [ "${{ steps.cache-ccache.outputs.cache-hit }}" = "true" ]; then
+                CCACHE_CACHE="hit"
+              fi
+            fi
           fi
 
           HIT_RATE="n/a"
@@ -150,7 +159,7 @@ jobs:
             STATS="$(ccache --show-stats 2>/dev/null || true)"
             printf '%s\n' "${STATS}"
             HIT_LINE="$(printf '%s\n' "${STATS}" | awk '/^[[:space:]]*Hits:/ {print; exit}')"
-            HIT_RATE="$(printf '%s\n' "${STATS}" | awk '/^[[:space:]]*Hits:/ {gsub(/[()%]/,"",$NF); print $NF; exit}')"
+            HIT_RATE="$(printf '%s\n' "${STATS}" | awk '/^[[:space:]]*Hits:/ && $NF ~ /%/ {gsub(/[()%]/,"",$NF); print $NF; exit}')"
             if [ -z "${HIT_RATE}" ]; then
               HIT_RATE="n/a"
             fi
