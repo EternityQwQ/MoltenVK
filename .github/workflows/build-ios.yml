@@ -1,4 +1,4 @@
-name: Build MoltenVK iOS arm64 dylib
+name: Build MoltenVK iOS arm64
 
 # Manual-only workflow: start it from the Actions tab.
 on:
