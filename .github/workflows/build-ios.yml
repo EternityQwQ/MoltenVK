@@ -23,7 +23,7 @@ concurrency:
 
 jobs:
   build-ios-dylib:
-    name: MoltenVK (iOS arm64 dylib)
+    name: MoltenVK (iOS arm64)
     runs-on: macos-15
     timeout-minutes: 120
 
