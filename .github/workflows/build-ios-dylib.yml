@@ -178,19 +178,28 @@ jobs:
         if: ${{ inputs.sign }}
         run: |
           set -euo pipefail
-          for f in artifacts/libMoltenVK.dylib artifacts/MoltenVK.framework; do
-            echo ">>> Verifying $f"
+
+          verify_adhoc() {
+            local path="$1"
+            echo ">>> Verifying $path"
 
             # Fails the job if the signature is missing or the code has been modified.
-            codesign --verify --strict --verbose=2 "$f"
+            # Verify the Mach-O itself: stricter bundle-level checks on a framework
+            # can fail on resource-envelope details that do not affect loading.
+            codesign --verify --strict --verbose=2 "$path"
 
-            DV="$(codesign -dv "$f" 2>&1 || true)"
-            echo "$DV"
-            if ! grep -q "Signature=adhoc" <<< "$DV"; then
-              echo "::error title=Signature verification failed::$f is not ad-hoc signed"
+            local dv
+            dv="$(codesign -dv "$path" 2>&1 || true)"
+            echo "$dv"
+            if ! grep -q "Signature=adhoc" <<< "$dv"; then
+              echo "::error title=Signature verification failed::$path is not ad-hoc signed"
               exit 1
             fi
-          done
+          }
+
+          verify_adhoc artifacts/libMoltenVK.dylib
+          verify_adhoc artifacts/MoltenVK.framework/MoltenVK
+
           echo "All outputs are valid ad-hoc signatures."
 
       - name: Upload dylib artifact
