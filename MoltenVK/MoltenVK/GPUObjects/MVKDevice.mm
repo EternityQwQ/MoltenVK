@@ -145,8 +145,19 @@ VkResult MVKPhysicalDevice::getExtensionProperties(const char* pLayerName, uint3
 	return _supportedExtensions.getProperties(pCount, pProperties);
 }
 
+// Sets every VkBool32 member of a Vulkan feature structure to VK_TRUE.
+// In Vulkan feature structures, all members after sType and pNext are VkBool32 flags,
+// so the number of flags is derived from the size of the structure.
+template <typename S>
+static void mvkSetFeatureBoolsTrue(S* pFeatureStruct) {
+	auto* pBools = (VkBool32*)mvkGetAddressOfFirstMember(pFeatureStruct);
+	size_t boolCnt = (sizeof(S) - (size_t)((const char*)pBools - (const char*)pFeatureStruct)) / sizeof(VkBool32);
+	for (size_t i = 0; i < boolCnt; i++) { pBools[i] = VK_TRUE; }
+}
+
 void MVKPhysicalDevice::getFeatures(VkPhysicalDeviceFeatures* features) {
     *features = _features;
+	if (getMVKConfig().enableAllFeatures) { mvkSetFeatureBoolsTrue(features); }
 }
 
 void MVKPhysicalDevice::getFeatures(VkPhysicalDeviceFeatures2* features) {
@@ -818,6 +829,41 @@ void MVKPhysicalDevice::getFeatures(VkPhysicalDeviceFeatures2* features) {
 			}
 			default:
 				break;
+		}
+	}
+
+	// Optionally advertise every feature in the pNext chain as supported.
+	if (getMVKConfig().enableAllFeatures) {
+		mvkSetFeatureBoolsTrue(&features->features);
+		for (auto* next = (VkBaseOutStructure*)features->pNext; next; next = next->pNext) {
+			switch ((uint32_t)next->sType) {
+				case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES:
+					mvkSetFeatureBoolsTrue((VkPhysicalDeviceVulkan11Features*)next);
+					break;
+				case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES:
+					mvkSetFeatureBoolsTrue((VkPhysicalDeviceVulkan12Features*)next);
+					break;
+				case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES:
+					mvkSetFeatureBoolsTrue((VkPhysicalDeviceVulkan13Features*)next);
+					break;
+				case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_4_FEATURES:
+					mvkSetFeatureBoolsTrue((VkPhysicalDeviceVulkan14Features*)next);
+					break;
+
+				// For consistency and ease of admin, keep the following list in the same order as in MVKDeviceFeatureStructs.def
+#define MVK_DEVICE_FEATURE(structName, enumName, flagCount) \
+				case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_##enumName##_FEATURES: \
+					mvkSetFeatureBoolsTrue((VkPhysicalDevice##structName##Features*)next); \
+					break;
+#define MVK_DEVICE_FEATURE_EXTN(structName, enumName, extnSfx, flagCount) \
+				case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_##enumName##_FEATURES_##extnSfx: \
+					mvkSetFeatureBoolsTrue((VkPhysicalDevice##structName##Features##extnSfx*)next); \
+					break;
+#include "MVKDeviceFeatureStructs.def"
+
+				default:
+					break;
+			}
 		}
 	}
 }
@@ -2877,6 +2923,15 @@ void MVKPhysicalDevice::initFeatures() {
 	// Additional non-extension Vulkan 1.4 features.
 	mvkClear(&_vulkan14NoExtFeatures);		// Start with everything cleared
 	_vulkan14NoExtFeatures.pushDescriptor = true;
+
+	// Optionally override all feature flags to VK_TRUE, including the internally tracked
+	// flags that drive properties and limits, so feature reporting stays consistent with
+	// the features advertised through getFeatures().
+	if (getMVKConfig().enableAllFeatures) {
+		mvkSetFeatureBoolsTrue(&_features);
+		mvkSetFeatureBoolsTrue(&_vulkan12NoExtFeatures);
+		mvkSetFeatureBoolsTrue(&_vulkan14NoExtFeatures);
+	}
 
 }
 

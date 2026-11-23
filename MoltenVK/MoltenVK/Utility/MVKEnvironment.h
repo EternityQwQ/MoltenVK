@@ -350,3 +350,17 @@ void mvkSetConfig(MVKConfiguration& dstMVKConfig, const MVKConfiguration& srcMVK
 #ifndef MVK_CONFIG_LIVE_CHECK_ALL_RESOURCES
 #   define MVK_CONFIG_LIVE_CHECK_ALL_RESOURCES 0
 #endif
+
+/**
+ * Advertise every Vulkan device feature as supported, regardless of whether the underlying
+ * Metal device can actually implement it, and allow applications to enable those features
+ * when creating a VkDevice. This is useful for running applications or translation layers
+ * that refuse to start when a feature they consider mandatory is not advertised.
+ *
+ * Disabled by default, so that only features actually supported by the Metal device are
+ * advertised. Enable with `MVK_CONFIG_ENABLE_ALL_FEATURES=1`. Enabling features that the
+ * hardware cannot implement can cause rendering errors or crashes.
+ */
+#ifndef MVK_CONFIG_ENABLE_ALL_FEATURES
+#   define MVK_CONFIG_ENABLE_ALL_FEATURES 0
+#endif

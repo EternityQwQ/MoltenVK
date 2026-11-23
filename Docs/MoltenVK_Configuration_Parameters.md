@@ -658,3 +658,17 @@ In the special case of `VK_SEMAPHORE_TYPE_TIMELINE` semaphores, **MoltenVK** wil
 Makes MoltenVK treat all descriptors as if they had `VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT` set.
 Versions of MoltenVK with this flag are less forgiving of applications that bind descriptors that point to
 destroyed objects, so this option can be used to temporarily work around any breakage that may have caused.
+
+---------------------------------------
+#### MVK_CONFIG_ENABLE_ALL_FEATURES
+
+##### Type: Boolean
+##### Default: `0`
+
+Advertises every Vulkan device feature as supported, regardless of whether the underlying _Metal_
+device can actually implement it, and allows applications to enable those features when creating a `VkDevice`.
+
+This is useful for applications or translation layers that refuse to start when a feature they consider
+mandatory is not advertised. It is disabled by default, so that only features actually supported by the
+_Metal_ device are advertised. Set `MVK_CONFIG_ENABLE_ALL_FEATURES=1` to enable it. Enabling features
+that the underlying _Metal_ device does not support can cause rendering errors or crashes.
