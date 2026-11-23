@@ -9,9 +9,17 @@ on:
         required: false
         type: boolean
         default: true
+      xcode_version:
+        description: "Xcode version to use, e.g. 16.4 (empty = runner default)"
+        required: false
+        default: ""
 
 permissions:
   contents: read
+
+concurrency:
+  group: ios-dylib-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build-ios-dylib:
@@ -19,11 +27,20 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 120
 
+    env:
+      LC_ALL: C
+      LANG: C
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
+
+      - name: Select Xcode (optional)
+        if: ${{ inputs.xcode_version != '' }}
+        run: |
+          sudo xcode-select -s "/Applications/Xcode_${{ inputs.xcode_version }}.app/Contents/Developer"
 
       - name: Show Xcode version
         id: prep
@@ -42,7 +59,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.ccache
-          key: ccache-${{ runner.os }}-${{ steps.prep.outputs.XCODE_VERSION }}-${{ github.sha }}
+          key: ccache-${{ runner.os }}-${{ steps.prep.outputs.XCODE_VERSION }}-${{ hashFiles('MoltenVK/**', 'Common/**', 'MoltenVKShaderConverter/**', 'ExternalRevisions/**') }}
           restore-keys: |
             ccache-${{ runner.os }}-${{ steps.prep.outputs.XCODE_VERSION }}-
 
@@ -51,7 +68,9 @@ jobs:
       # dependency builds) is cached.
       - name: Install and configure ccache
         run: |
-          brew install ccache
+          if ! command -v ccache >/dev/null 2>&1; then
+            brew install ccache
+          fi
           export CCACHE_DIR="$HOME/.ccache"
           mkdir -p "$CCACHE_DIR" "$RUNNER_TEMP/ccache-bin"
 
@@ -70,7 +89,7 @@ jobs:
           # Make sure ccache's masquerade wrappers can find the real compiler.
           echo "$(xcode-select -p)/Toolchains/XcodeDefault.xctoolchain/usr/bin" >> "$GITHUB_PATH"
 
-          ccache --max-size=2G
+          ccache --max-size=1G
           ccache --set-config=compression=true
           ccache --zero-stats
           ccache --show-config | grep -E "max_size|compression" || true
@@ -85,8 +104,10 @@ jobs:
         id: cache-dependencies
         uses: actions/cache@v4
         with:
-          path: External
-          key: moltenvk-ios-${{ runner.os }}-${{ steps.prep.outputs.XCODE_VERSION }}-${{ hashFiles('ExternalRevisions/**', 'fetchDependencies') }}
+          path: |
+            External
+            !External/build/Intermediates
+          key: moltenvk-ios-${{ runner.os }}-${{ steps.prep.outputs.XCODE_VERSION }}-${{ hashFiles('ExternalRevisions/**', 'fetchDependencies', 'ExternalDependencies.xcodeproj/**', 'Scripts/**') }}
 
       - name: Fetch dependencies (cache hit)
         if: steps.cache-dependencies.outputs.cache-hit == 'true'
@@ -117,7 +138,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          FW_DIR="$(find Package/Release/MoltenVK/dynamic -type d -name 'MoltenVK.framework' -path '*ios-arm64*' -print -quit)"
+          FW_DIR="$(find Package/Release/MoltenVK/dynamic -type d -name 'MoltenVK.framework' -path '*ios-arm64*' -print -quit || true)"
           if [ -z "${FW_DIR}" ]; then
             echo "ERROR: MoltenVK.framework (ios-arm64) not found. Built packages:"
             find Package -maxdepth 5 -print || true
@@ -181,6 +202,12 @@ jobs:
             artifacts/MoltenVK.framework
           if-no-files-found: error
 
-      - name: Show build log on failure
+      - name: Show build logs on failure
         if: failure()
-        run: cat xcodebuild.log || true
+        run: |
+          for log in xcodebuild.log dependenciesbuild.log; do
+            if [ -f "$log" ]; then
+              echo "===== tail of $log ====="
+              tail -n 200 "$log"
+            fi
+          done
