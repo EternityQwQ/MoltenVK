@@ -1709,6 +1709,25 @@ bool MVKGraphicsPipeline::addVertexInputToPipeline(T* inputDesc,
                 return false;
             }
 
+			// AMETHYST-DIAG: stride 20 is Sodium 0.8.9/0.9's compact chunk vertex format.  Dump
+			// the attribute formats and offsets once so a device log shows whether the terrain
+			// pipeline reached MoltenVK with the expected integer/normalized vertex layout.
+			if (pVKVB->stride == 20) {
+				static uint32_t s_diagStride20Count = 0;
+				if (s_diagStride20Count < 4) {
+					s_diagStride20Count++;
+					MVKLogWarn("[AMETHYST-DIAG] vertex binding %u stride=20 rate=%u has %u attributes",
+							   pVKVB->binding, (unsigned)pVKVB->inputRate, pVI->vertexAttributeDescriptionCount);
+					for (uint32_t a = 0; a < pVI->vertexAttributeDescriptionCount; a++) {
+						const VkVertexInputAttributeDescription& attr = pVI->pVertexAttributeDescriptions[a];
+						if (attr.binding == pVKVB->binding) {
+							MVKLogWarn("[AMETHYST-DIAG]   location=%u binding=%u format=%d offset=%u",
+									   attr.location, attr.binding, (int)attr.format, attr.offset);
+						}
+					}
+				}
+			}
+
 			maxBinding = max<int32_t>(pVKVB->binding, maxBinding);
 			uint32_t vbIdx = getMetalBufferIndexForVertexAttributeBinding(pVKVB->binding);
 			_mtlVertexBuffers.set(vbIdx);

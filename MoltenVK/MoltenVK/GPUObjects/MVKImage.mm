@@ -1229,6 +1229,20 @@ MVKImage::MVKImage(MVKDevice* device, const VkImageCreateInfo* pCreateInfo) : MV
 	_extent.depth = max(pCreateInfo->extent.depth, minDim);
     _arrayLayers = max(pCreateInfo->arrayLayers, minDim);
 
+	// AMETHYST-DIAG: the terrain lightmap is a 16x16 colour image.  Log its creation so a
+	// device log still shows that the image exists even if it never reaches a shader bind.
+	if (_extent.width == 16 && _extent.height == 16) {
+		static uint32_t s_diag16x16Images = 0;
+		if (s_diag16x16Images < 8) {
+			s_diag16x16Images++;
+			MVKLogWarn("[AMETHYST-DIAG] 16x16 image created: format=%d usage=0x%x flags=0x%x mips=%u layers=%u samples=%u imageType=%d tiling=%d",
+					   (int)pCreateInfo->format, pCreateInfo->usage, pCreateInfo->flags,
+					   pCreateInfo->mipLevels, pCreateInfo->arrayLayers,
+					   (unsigned)pCreateInfo->samples, (int)pCreateInfo->imageType,
+					   (int)pCreateInfo->tiling);
+		}
+	}
+
 	// Perform validation and adjustments before configuring other settings
 	bool isAttachment = mvkIsAnyFlagEnabled(pCreateInfo->usage, (VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
 																 VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
@@ -2333,8 +2347,30 @@ MVKImageView::MVKImageView(MVKDevice* device, const VkImageViewCreateInfo* pCrea
 													 VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT |
 													 VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT));
 	if (isAttachment && _subresourceRange.layerCount > 1) {
-		if ( !mtlFeats.layeredRendering ) {
+		// Sampling a multi-layer view (cube map, 2D array, 3D slice view) is legal even on
+		// devices that cannot render to layered attachments.  The original check rejected any
+		// multi-layer view whose usage mask contained an attachment bit, which is exactly the
+		// shape ANGLE produces for read/copy image views: it declares COLOR_ATTACHMENT |
+		// INPUT_ATTACHMENT on every colour image and only restricts the *view* to SAMPLED in
+		// the later upstream fix.  A sampled view must therefore not be rejected here; only a
+		// pure layered render target (no sampled usage at all) is unsupported.
+		const bool isSampleable = mvkIsAnyFlagEnabled(_usage, VK_IMAGE_USAGE_SAMPLED_BIT);
+		if ( !mtlFeats.layeredRendering && !isSampleable ) {
 			setConfigurationResult(reportError(VK_ERROR_FEATURE_NOT_PRESENT, "vkCreateImageView() : This device does not support rendering to array (layered) attachments."));
+		}
+		if ( !mtlFeats.layeredRendering && isSampleable ) {
+			// Keep a single, clearly tagged line in the device log so a later regression is
+			// visible without enabling debug logging.  This is a workaround for old ANGLE
+			// builds and for any other client that over-declares image view usage.
+			static bool s_loggedSampledLayeredView = false;
+			if ( !s_loggedSampledLayeredView ) {
+				s_loggedSampledLayeredView = true;
+				const VkExtent3D extent = _image->getExtent3D();
+				MVKLogWarn("[AMETHYST-DIAG] allowing sampled %u-layer image view without layered-rendering support: viewType=%d usage=0x%x format=%d extent=%ux%u sampleCount=%u",
+						   _subresourceRange.layerCount, (int)pCreateInfo->viewType, _usage,
+						   (int)pCreateInfo->format, extent.width, extent.height,
+						   (unsigned)_image->getSampleCount());
+			}
 		}
 		if (_image->getSampleCount() != VK_SAMPLE_COUNT_1_BIT && !mtlFeats.multisampleLayeredRendering ) {
 			setConfigurationResult(reportError(VK_ERROR_FEATURE_NOT_PRESENT, "vkCreateImageView() : This device does not support rendering to multisampled array (layered) attachments."));

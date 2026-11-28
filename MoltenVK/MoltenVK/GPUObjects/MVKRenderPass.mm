@@ -21,6 +21,7 @@
 #include "MVKCommandBuffer.h"
 #include "MVKCommandEncodingPool.h"
 #include "MVKFoundation.h"
+#include "MVKLogging.h"
 #include "mvk_datatypes.hpp"
 
 #include <cassert>
@@ -299,6 +300,29 @@ void MVKRenderSubpass::encodeStoreActions(MVKCommandEncoder* cmdEncoder,
                                           MVKArrayRef<MVKImageView*const> attachments,
                                           bool storeOverride) {
     if (!cmdEncoder->_mtlRenderEncoder) { return; }
+
+	// AMETHYST-DIAG: a 16x16 colour render target is almost certainly MC 26.1's lightmap.  Log
+	// the attachment's format and load/store actions once, so a device log can tell whether the
+	// pass that produces the terrain lightmap is being encoded with a sane load/store policy.
+	{
+		static uint32_t s_diag16x16Passes = 0;
+		if (s_diag16x16Passes < 8) {
+			uint32_t caCnt = getColorAttachmentCount();
+			for (uint32_t caIdx = 0; caIdx < caCnt; ++caIdx) {
+				uint32_t attIdx = _colorAttachments[caIdx].attachment;
+				if (attIdx == VK_ATTACHMENT_UNUSED || !attachments[attIdx]) { continue; }
+				const VkExtent3D ext = attachments[attIdx]->getExtent3D();
+				if (ext.width == 16 && ext.height == 16) {
+					s_diag16x16Passes++;
+					const VkAttachmentDescription2& info = _renderPass->_attachments[attIdx]._info;
+					MVKLogWarn("[AMETHYST-DIAG] 16x16 color attachment pass: format=%d loadOp=%d storeOp=%d samples=%u",
+							   (int)info.format, (int)info.loadOp, (int)info.storeOp,
+							   (unsigned)info.samples);
+					break;
+				}
+			}
+		}
+	}
 
 	MVKPixelFormats* pixFmts = _renderPass->getPixelFormats();
     uint32_t caCnt = getColorAttachmentCount();

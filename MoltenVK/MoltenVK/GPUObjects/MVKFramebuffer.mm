@@ -69,6 +69,15 @@ MVKFramebuffer::MVKFramebuffer(MVKDevice* device,
 	_layerCount = pCreateInfo->layers;
     _extent = { .width = pCreateInfo->width, .height = pCreateInfo->height };
 
+	// Layer checks belong here, not in vkCreateImageView.  A multi-layer *view* is legal even
+	// when the device cannot render to layered attachments; only a framebuffer that actually
+	// uses more than one layer is unsupported.  maxFramebufferLayers is 1 on this class of
+	// device (see MVKPhysicalDevice::initLimits), which matches this check.
+	if (_layerCount > 1 && !getMetalFeatures().layeredRendering) {
+		setConfigurationResult(reportError(VK_ERROR_FEATURE_NOT_PRESENT,
+										   "vkCreateFramebuffer() : This device does not support layered framebuffers (maxFramebufferLayers = 1)."));
+	}
+
 	// If this is not an image-less framebuffer, add the attachments
 	if ( !mvkIsAnyFlagEnabled(pCreateInfo->flags, VK_FRAMEBUFFER_CREATE_IMAGELESS_BIT) ) {
 		_attachments.reserve(pCreateInfo->attachmentCount);
@@ -81,6 +90,11 @@ MVKFramebuffer::MVKFramebuffer(MVKDevice* device,
 							   const VkRenderingInfo* pRenderingInfo) : MVKVulkanAPIDeviceObject(device) {
 	_layerCount = pRenderingInfo->layerCount;
 	_extent = {};
+
+	if (_layerCount > 1 && !getMetalFeatures().layeredRendering) {
+		setConfigurationResult(reportError(VK_ERROR_FEATURE_NOT_PRESENT,
+										   "vkCreateFramebuffer() : This device does not support layered framebuffers (maxFramebufferLayers = 1)."));
+	}
 
 	// Assemble the list of attachments. This must be done identically to how the dynamic renderpass assembles attachments.
 	uint32_t attCnt = 0;

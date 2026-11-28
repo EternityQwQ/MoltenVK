@@ -23,6 +23,7 @@
 #include "MVKRenderPass.h"
 #include "MVKPipeline.h"
 #include "MVKQueryPool.h"
+#include "MVKLogging.h"
 #include "mvk_datatypes.hpp"
 
 using namespace std;
@@ -235,10 +236,30 @@ static void bindVertexBuffer(id<MTLCommandEncoder> encoder, id<MTLBuffer> buffer
 	}
 }
 
+// AMETHYST-DIAG: terrain-black debugging.  MC 26.1's lightmap is a 16x16 RGBA8 texture that is
+// rendered on the GPU and then sampled by the terrain shader.  Logging the first few 16x16
+// texture binds answers "is the lightmap reaching the shader at all, and with which Metal
+// type/usage/storage?" from a device log, without a GPU capture.
+static void logDiag16x16Texture(id<MTLTexture> texture, NSUInteger index) {
+	if ( !texture || texture.width != 16 || texture.height != 16 ) { return; }
+	static uint32_t s_count = 0;
+	if (s_count >= 16) { return; }
+	s_count++;
+	// This helper is not an MVKBaseObject subclass, so use the object-less static reportMessage
+	// overload instead of the MVKLogWarn macro (which expands to a member call).
+	MVKBaseObject::reportMessage(nullptr, MVK_CONFIG_LOG_LEVEL_WARNING,
+								 "[AMETHYST-DIAG] sampled 16x16 texture at slot %lu: pixelFormat=%lu textureType=%lu usage=0x%lx mips=%lu samples=%lu storage=%lu",
+								 (unsigned long)index, (unsigned long)texture.pixelFormat,
+								 (unsigned long)texture.textureType, (unsigned long)texture.usage,
+								 (unsigned long)texture.mipmapLevelCount,
+								 (unsigned long)texture.sampleCount, (unsigned long)texture.storageMode);
+}
+
 template <typename Binder, typename Encoder>
 static void bindTexture(Encoder encoder, id<MTLTexture> texture, NSUInteger index,
                         MVKStageResourceBits& exists, MVKStageResourceBindings& bindings, const Binder& binder) {
 	assert(index < kMVKMaxTextureCount);
+	logDiag16x16Texture(texture, index);
 	if (!exists.textures.get(index) || bindings.textures[index] != texture) {
 		exists.textures.set(index);
 		binder.setTexture(encoder, texture, index);
